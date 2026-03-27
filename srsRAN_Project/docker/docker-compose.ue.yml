@@ -1,0 +1,34 @@
+services:
+  gnb:
+    configs:
+      - gnb_config.yml
+
+  ue:
+    container_name: srsran_ue
+    build:
+      context: ../../srsRAN_4G
+      dockerfile: docker/ue/Dockerfile
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      gnb:
+        condition: service_started
+    environment:
+      - SRSUE_BIN=/mnt/d/projects/oran-sc-ric/srsRAN_4G/build/srsue/src/srsue
+      - SRSUE_CFG=/mnt/d/projects/oran-sc-ric/e2-agents/srsRAN/ue_zmq_docker.conf
+      - RF_LIB_DIR=/mnt/d/projects/oran-sc-ric/srsRAN_4G/build/lib/src/phy/rf
+    volumes:
+      - ../../:/mnt/d/projects/oran-sc-ric:ro
+      - ue-storage:/tmp
+    networks:
+      ran:
+        ipv4_address: 10.53.1.4
+
+configs:
+  gnb_config.yml:
+    file: ../../e2-agents/srsRAN/gnb_zmq_docker_ue.yaml
+
+volumes:
+  ue-storage:
