@@ -48,8 +48,8 @@ RUN git clone --depth 1 --branch ${SC_RIC_VERSION} https://github.com/o-ran-sc/r
 
 # Patch xApp Python Framework
 WORKDIR /opt/ric-plt-xapp-frame-py
-COPY ./ric-plt-xapp-frame-py.patch .
-RUN git apply ./ric-plt-xapp-frame-py.patch
+COPY ./patch_xapp_frame.py .
+RUN python ./patch_xapp_frame.py
 
 WORKDIR /opt/
 

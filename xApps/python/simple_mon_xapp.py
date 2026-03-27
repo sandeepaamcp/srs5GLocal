@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
+import urllib.request
 import signal
 from lib.xAppBase import xAppBase
+
+
+def get_e2_node_id(e2_node_id):
+    if e2_node_id:
+        return e2_node_id
+
+    with urllib.request.urlopen("http://10.0.2.15:12020/ric/v1/handles/", timeout=5) as response:
+        e2_nodes = json.loads(response.read().decode("utf-8"))
+
+    if not e2_nodes:
+        raise RuntimeError("No available E2 nodes returned by SubMgr")
+
+    return e2_nodes[0]
 
 
 class MyXapp(xAppBase):
@@ -29,7 +44,7 @@ class MyXapp(xAppBase):
     # It is required to start the internal msg receive loop.
     @xAppBase.start_function
     def start(self, e2_node_id, metric_names):
-        print("Subscribe to E2 node ID: {}, RAN func: e2sm_kpm for metrics {}".format(e2_node_id, metrics))
+        print("Subscribe to E2 node ID: {}, RAN func: e2sm_kpm for metrics {}".format(e2_node_id, metric_names))
         report_period = 1000
         granul_period = 100
         self.e2sm_kpm.subscribe_report_service_style_1(e2_node_id, report_period, metric_names, granul_period, self.my_subscription_callback)
@@ -40,18 +55,18 @@ if __name__ == '__main__':
     parser.add_argument("--config", type=str, default='', help="xApp config file path")
     parser.add_argument("--http_server_port", type=int, default=8091, help="HTTP server listen port")
     parser.add_argument("--rmr_port", type=int, default=4561, help="RMR port")
-    parser.add_argument("--e2_node_id", type=str, default='gnbd_001_001_00019b_0', help="E2 Node ID")
+    parser.add_argument("--e2_node_id", type=str, default='', help="E2 Node ID")
     parser.add_argument("--ran_func_id", type=int, default=2, help="RAN function ID")
     parser.add_argument("--metrics", type=str, default='DRB.UEThpDl', help="Metrics name as comma-separated string")
 
     args = parser.parse_args()
     config = args.config
-    e2_node_id = args.e2_node_id # TODO: get available E2 nodes from SubMgr, now the id has to be given.
-    ran_func_id = args.ran_func_id # TODO: get available E2 nodes from SubMgr, now the id has to be given.
-    metrics = args.metrics.split(",")
 
     # Create MyXapp.
     myXapp = MyXapp(config, args.http_server_port, args.rmr_port)
+    e2_node_id = get_e2_node_id(args.e2_node_id)
+    ran_func_id = args.ran_func_id
+    metrics = args.metrics.split(",")
     myXapp.e2sm_kpm.set_ran_func_id(ran_func_id)
 
     # Connect exit signals.

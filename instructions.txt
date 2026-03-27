@@ -1,0 +1,139 @@
+WORKING FLOW FOR ORAN-SC-RIC + SRSRAN + UE + GRAFANA
+
+Assumption:
+- Run these commands from the repository root unless a step says to change directory.
+
+FROM SCRATCH SETUP
+
+0. Prerequisites
+- Install Docker Desktop and make sure Docker is running.
+- Install WSL with Ubuntu.
+- Inside WSL, install basic build tools needed for srsRAN_4G and srsRAN_Project.
+
+1. Clone the repositories
+git clone <this-repo-url> oran-sc-ric
+cd oran-sc-ric
+git clone https://github.com/srsran/srsRAN_Project.git
+git clone https://github.com/srsran/srsRAN_4G.git
+
+2. Build srsUE in WSL
+Open Ubuntu WSL and run:
+cd /path/to/oran-sc-ric/srsRAN_4G
+mkdir -p build
+cd build
+cmake ../ -DENABLE_ZMQ=ON
+make -j"$(nproc)"
+
+Check that the UE binary exists:
+ls -l /path/to/oran-sc-ric/srsRAN_4G/build/srsue/src/srsue
+
+3. Build the Docker UE image once
+Back in the repo on the host:
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml build ue
+
+4. Start the RIC stack
+cd ../../
+docker compose up -d
+
+5. Start the srsRAN stack: 5GC + gNB + UE + Grafana
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml up -d
+
+NORMAL STARTUP FLOW
+
+1. Start the RIC stack
+cd ../../
+docker compose up -d
+
+2. Start the srsRAN stack: 5GC + gNB + UE + Grafana
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml up -d
+
+3. Check that everything is up
+cd ../../
+docker compose ps
+
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml ps
+
+4. Open Grafana
+http://localhost:3300
+
+Notes:
+- View mode works without login.
+- If login is needed: admin / admin
+- Dashboards are under Home > Dashboards > srsRAN Metrics
+
+5. Quick health checks
+docker ps --format "table {{.Names}}`t{{.Status}}"
+docker logs srsran_ue --tail 50
+docker exec srsran_gnb /bin/sh -c "tail -n 80 /tmp/gnb.log"
+
+6. Run the monitor xApp
+cd ../../
+docker compose exec python_xapp_runner ./simple_mon_xapp.py --http_server_port=8092 --rmr_port=4562 --e2_node_id=gnbd_001_001_00019b_0 --metrics=DRB.UEThpDl,DRB.UEThpUl
+
+Expected good signs:
+- Successfully subscribed with Subscription ID
+- POST /ric/v1/subscriptions/response HTTP/1.1 200
+- Later, indication messages appear when traffic is flowing
+
+7. Generate simple UE traffic with ping
+docker exec -it srsran_ue ping -I tun_srsue -c 10 10.45.1.1
+
+8. Generate stronger UE traffic with iperf3
+Start iperf3 server in 5GC:
+docker exec -it open5gs_5gc /bin/sh -lc "iperf3 -s"
+
+Run uplink traffic from UE:
+docker exec -it srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -t 30"
+
+Run downlink-heavy traffic from UE:
+docker exec -it srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -R -t 30"
+
+9. Verify UE tunnel and reachability
+docker exec -it srsran_ue ip addr show tun_srsue
+docker exec -it srsran_ue ip route
+docker exec -it open5gs_5gc ping -c 5 10.45.1.2
+
+RECOVERY
+
+10. Restart everything cleanly if the state gets stale
+Restart RIC:
+cd ../../
+docker compose down
+docker compose up -d
+
+Restart srsRAN + UE + Grafana:
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml down
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml up -d
+
+Then wait about 30-60 seconds before rerunning the xApp.
+
+11. Lighter restart if you do not want a full down/up
+cd ../../
+docker compose restart
+
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml restart
+
+SHUTDOWN
+
+12. Stop everything
+Stop srsRAN + UE + Grafana:
+cd srsRAN_Project/docker
+docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml down
+
+Stop RIC:
+cd ../../
+docker compose down
+
+COMMON ISSUES
+
+13. Notes about common issues
+- If Grafana shows 0 active UEs and no data, the UE may be attached but idle, or the UE session may have bounced.
+- If the xApp gets 503 from submgr, restart RIC + gNB/UE and wait for E2 state to settle.
+- If the xApp says address already in use, restart python_xapp_runner or choose another free http/rmr port pair.
+- The docker-compose.yml warning about version being obsolete is harmless for now.
