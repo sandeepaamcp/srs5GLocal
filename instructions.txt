@@ -2,13 +2,16 @@ WORKING FLOW FOR ORAN-SC-RIC + SRSRAN + UE + GRAFANA
 
 Assumption:
 - Run these commands from the repository root unless a step says to change directory.
+- This version is for a native Linux environment. The older Windows/WSL path examples
+  have been replaced with Linux shell commands.
 
 FROM SCRATCH SETUP
 
 0. Prerequisites
-- Install Docker Desktop and make sure Docker is running.
-- Install WSL with Ubuntu.
-- Inside WSL, install basic build tools needed for srsRAN_4G and srsRAN_Project.
+- Install Docker Engine / Docker Compose plugin and make sure Docker is running.
+- Make sure your user can access Docker, or prefix Docker commands with sudo.
+- Install basic build tools needed for srsRAN_4G and srsRAN_Project.
+- Make sure /dev/net/tun exists on the host before starting the UE container.
 
 1. Clone the repositories
 git clone <this-repo-url> oran-sc-ric
@@ -17,7 +20,7 @@ git clone https://github.com/srsran/srsRAN_Project.git
 git clone https://github.com/srsran/srsRAN_4G.git
 
 2. Build srsUE in WSL
-Open Ubuntu WSL and run:
+Run on the Linux host:
 cd /path/to/oran-sc-ric/srsRAN_4G
 mkdir -p build
 cd build
@@ -28,7 +31,6 @@ Check that the UE binary exists:
 ls -l /path/to/oran-sc-ric/srsRAN_4G/build/srsue/src/srsue
 
 3. Build the Docker UE image once
-Back in the repo on the host:
 cd srsRAN_Project/docker
 docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml build ue
 
@@ -69,6 +71,13 @@ Notes:
 docker ps --format "table {{.Names}}`t{{.Status}}"
 docker logs srsran_ue --tail 50
 docker exec srsran_gnb /bin/sh -c "tail -n 80 /tmp/gnb.log"
+docker exec srsran_ue ip addr show tun_srsue
+
+Expected good signs:
+- srsran_ue logs move past "Attaching UE..."
+- srsran_ue has a tun_srsue interface, usually with 10.45.1.2/24
+- srsran_gnb /tmp/gnb.log shows UE/RNTI/RRC activity, not only repeated ZMQ "Waiting for data"
+- open5gs_5gc logs show UE registration/session activity after the gNB N2 setup
 
 6. Run the monitor xApp
 cd ../../
@@ -80,26 +89,38 @@ Expected good signs:
 - Later, indication messages appear when traffic is flowing
 
 7. Generate simple UE traffic with ping
-docker exec -it srsran_ue ping -I tun_srsue -c 10 10.45.1.1
+docker exec srsran_ue ping -I tun_srsue -c 10 10.45.1.1
 
 8. Generate stronger UE traffic with iperf3
 Start iperf3 server in 5GC:
 docker exec -it open5gs_5gc /bin/sh -lc "iperf3 -s"
 
 Run uplink traffic from UE:
-docker exec -it srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -t 30"
+docker exec srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -t 30"
 
 Run downlink-heavy traffic from UE:
-docker exec -it srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -R -t 30"
+docker exec srsran_ue /bin/sh -lc "iperf3 -c 10.45.1.1 -B 10.45.1.2 -R -t 30"
 
 9. Verify UE tunnel and reachability
 docker exec -it srsran_ue ip addr show tun_srsue
 docker exec -it srsran_ue ip route
 docker exec -it open5gs_5gc ping -c 5 10.45.1.2
 
+10. Verify which configs the live containers are actually using
+docker inspect srsran_gnb --format '{{range .Mounts}}{{println .Type .Source .Destination}}{{end}}'
+docker inspect srsran_ue --format '{{range .Mounts}}{{println .Type .Source .Destination}}{{end}}'
+docker exec srsran_gnb /bin/sh -lc "sed -n '1,220p' /gnb_config.yml"
+docker exec srsran_ue /bin/sh -lc "sed -n '1,220p' /config/ue_zmq_srsue_local.conf"
+
+If the live config is mounted from a sibling Linux path such as
+/home/chamara/Documents/projects/genshield-ai/srsRAN_Project/configs, update that
+file or recreate the container with the intended compose config. Editing only the
+copy under e2-agents/srsRAN will not change a running container that is using a
+different bind-mounted config.
+
 RECOVERY
 
-10. Restart everything cleanly if the state gets stale
+11. Restart everything cleanly if the state gets stale
 Restart RIC:
 cd ../../
 docker compose down
@@ -112,7 +133,7 @@ docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose
 
 Then wait about 30-60 seconds before rerunning the xApp.
 
-11. Lighter restart if you do not want a full down/up
+12. Lighter restart if you do not want a full down/up
 cd ../../
 docker compose restart
 
@@ -121,7 +142,7 @@ docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose
 
 SHUTDOWN
 
-12. Stop everything
+13. Stop everything
 Stop srsRAN + UE + Grafana:
 cd srsRAN_Project/docker
 docker compose -f docker-compose.yml -f docker-compose.ric.yml -f docker-compose.ue.yml -f docker-compose.ui.yml down
@@ -132,8 +153,10 @@ docker compose down
 
 COMMON ISSUES
 
-13. Notes about common issues
+14. Notes about common issues
 - If Grafana shows 0 active UEs and no data, the UE may be attached but idle, or the UE session may have bounced.
+- If srsran_ue has no tun_srsue interface, the UE has not completed attach/session setup. Do not run iperf yet; first inspect UE/gNB logs and ZMQ config.
+- If gNB logs repeatedly show ZMQ "Waiting for data", verify that the gNB rx_port points to the UE tx_port, the UE rx_port points to the gNB tx_port, both containers share the same Docker network, and the sample rates/channel bandwidth match.
 - If the xApp gets 503 from submgr, restart RIC + gNB/UE and wait for E2 state to settle.
 - If the xApp says address already in use, restart python_xapp_runner or choose another free http/rmr port pair.
 - The docker-compose.yml warning about version being obsolete is harmless for now.
