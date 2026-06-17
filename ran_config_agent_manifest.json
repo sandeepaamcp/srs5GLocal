@@ -1,0 +1,46 @@
+{
+  "repo_root": ".",
+  "runtime_profile": {
+    "compose_dir": "srsRAN_Project/docker",
+    "compose_files": [
+      "docker-compose.yml",
+      "docker-compose.ue.yml",
+      "docker-compose.ui.yml"
+    ],
+    "container_file_logs": [
+      {
+        "artifact_name": "srsran_gnb_tmp_gnb.log",
+        "container": "srsran_gnb",
+        "path": "/tmp/gnb.log"
+      }
+    ],
+    "host_log_files": [],
+    "log_commands": [],
+    "log_containers": [
+      "open5gs_5gc",
+      "srsran_gnb",
+      "srsran_ue"
+    ],
+    "log_tail_lines": 600,
+    "restart_script": "restart_5g_stack.sh",
+    "runtime": "docker-cycle",
+    "settle_seconds": 45,
+    "start_script": null,
+    "type": "docker_compose"
+  },
+  "schema_version": 1,
+  "targets": {
+    "core": {
+      "format": "yaml",
+      "path": "srsRAN_Project/docker/open5gs/open5gs-5gc.yml"
+    },
+    "gnb": {
+      "format": "yaml",
+      "path": "e2-agents/srsRAN/gnb_zmq_docker_ue.yaml"
+    },
+    "ue": {
+      "format": "ini",
+      "path": "e2-agents/srsRAN/ue_zmq_docker.conf"
+    }
+  }
+}
